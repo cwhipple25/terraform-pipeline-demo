@@ -6,15 +6,19 @@ This document outlines the step-by-step process for deploying AWS resources usin
 ## Pre-requisites
 - Access to Hub/Spoke accounts via the AWS Management Console.
 - An IDE or script editor such as NotePad++, Visual Studio Code, or AWS Cloud9 for modifying Terraform and CloudFormation files.
-- Git installed and configured.
+- Git installed and configured
 
 ## Steps
 
-### 0. (Optional) Deploy No-Ingress Cloud9 Environment
+### (Optional) Deploy No-Ingress Cloud9 Environment
 If you would rather opt for a remote environment from which to perform Git and script editing mentioned in steps below, please follow these instructions, otherwise, skip and move on to Step 1. The Cloud9 environment includes the Cloud9 IDE, Git, AWS CLI, and the ability to install any other software you may want/need. 
 - Navigate to the repository directory and locate the Cloud9 CloudFormation template: `<repo>/cloudformation/cloud9-setup.yml`.
 - Deploy the this stack in a centralized (Hub) AWS account.
 - Once the Cloud9 environment has been created, navigate to the Cloud9 console to access it. 
+
+### 0. Clone This Repository
+- Clone this repo to your own repo.
+- The following steps assume that your are working off your own clone of this repository.
 
 ### 1. Repository Checkout
 - Perform a Git fetch and pull to retrieve the repository that contains the CloudFormation and Terraform scripts.
