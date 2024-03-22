@@ -1,0 +1,317 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description:  Creates Terraform dependencies and CI/CD pipeline using CodeBuild and CodePipeline to deploy Terraform resources in the Spoke accounts.
+
+Parameters:
+  CodeCommitRepoName:
+    Type: String
+    Description: The name of the CodeCommit repository where the Terraform project is located.
+    Default: ''
+  ProjectName:
+    Type: String
+    Description: This value will be used in the naming of the resources. This value should be the same as the Spoke stackset [ProjectName] parameter.
+    Default: ec2demo
+  BuildSpecFilePath:
+    Type: String
+    Description: The path to the buildspec file for the CodeBuild project.
+    Default: projects/ec2_demo/buildspec.yml
+  ExistingTerraformStateS3Bucket:
+    Type: String
+    Description: Name of an existing Terraform State S3 bucket to be used for this project. Leave blank to automatically create a new one.
+    Default: ''
+  ExistingCodePipelineArtifactS3Bucket:
+    Type: String
+    Description: Name of an existing CodePipeline Artifact S3 bucket to be used for this project. Leave blank to automatically create a new one.
+    Default: ''
+
+Conditions:
+  CreateTerraformStateS3Bucket: !Equals [!Ref ExistingTerraformStateS3Bucket, '']  
+  CreateCodePipelineArtifactS3Bucket: !Equals [!Ref ExistingCodePipelineArtifactS3Bucket, '']
+
+Resources:
+  DynamoDBTableTerraformLock:
+    Type: 'AWS::DynamoDB::Table'
+    Properties:
+      TableName: !Sub '${ProjectName}-terraform-lock-table'
+      AttributeDefinitions:
+        - AttributeName: LockID
+          AttributeType: S
+      KeySchema:
+        - AttributeName: LockID
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+
+  S3BucketTerraformState:
+    Type: 'AWS::S3::Bucket'
+    Condition: CreateTerraformStateS3Bucket
+    Properties:
+      BucketName: !Join
+        - "-"
+        - - "terraform-state-bucket"
+          - !Select
+            - 0
+            - !Split
+              - "-"
+              - !Select
+                - 2
+                - !Split
+                  - "/"
+                  - !Ref "AWS::StackId"
+      PublicAccessBlockConfiguration:
+        RestrictPublicBuckets: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        BlockPublicAcls: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  S3BucketCodePipelineArtifacts:
+    Type: 'AWS::S3::Bucket'
+    Condition: CreateCodePipelineArtifactS3Bucket
+    Properties:
+      BucketName: !Join
+        - "-"
+        - - "codepipeline-artifact-bucket"
+          - !Select
+            - 0
+            - !Split
+              - "-"
+              - !Select
+                - 2
+                - !Split
+                  - "/"
+                  - !Ref "AWS::StackId"
+
+  TerraformHubRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-terraform-hub-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !GetAtt CodeBuildRole.Arn
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: TerraformS3DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:PutObject'
+                  - 's3:ListBucket'
+                Resource:
+                  - !If [CreateTerraformStateS3Bucket, !GetAtt S3BucketTerraformState.Arn, !Sub "arn:aws:s3:::${ExistingTerraformStateS3Bucket}"]
+                  - !If [CreateTerraformStateS3Bucket, !Sub "${S3BucketTerraformState.Arn}/*" , !Sub  "arn:aws:s3:::${ExistingTerraformStateS3Bucket}/*"]
+              - Effect: Allow
+                Action:
+                  - 'dynamodb:DescribeTable'
+                  - 'dynamodb:GetItem'
+                  - 'dynamodb:PutItem'
+                  - 'dynamodb:DeleteItem'
+                Resource: !GetAtt DynamoDBTableTerraformLock.Arn
+
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-terraform-codebuild-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [codebuild.amazonaws.com]
+            Action: ['sts:AssumeRole']
+      Policies:
+        - PolicyName: CodeBuildBasePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                  - 's3:GetObject'
+                  - 's3:PutObject'
+                Resource: '*'
+        - PolicyName: AllowTerraformAssumeRole
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: "AllowTerraformAssumeRole"
+                Effect: "Allow"
+                Action: "sts:AssumeRole"
+                Resource: !Sub "arn:aws:iam::*:role/${ProjectName}-terraform-spoke-role"
+
+  CodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [codepipeline.amazonaws.com]
+            Action: ['sts:AssumeRole']
+      Policies:
+        - PolicyName: CodePipelinePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'codecommit:Get*'
+                  - 'codecommit:List*'
+                  - 'codecommit:GitPull'
+                  - 'codecommit:UploadArchive'
+                  - 's3:GetObject'
+                  - 's3:GetObjectVersion'
+                  - 's3:GetBucketVersioning'
+                  - 's3:PutObject'
+                  - 'codebuild:StartBuild'
+                  - 'codebuild:BatchGetBuilds'
+                  - 'iam:PassRole'
+                Resource: '*'
+
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${ProjectName}-build-project"
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: !Ref BuildSpecFilePath
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
+        EnvironmentVariables: []
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      LogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+
+  CodePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub "${ProjectName}-pipeline"
+      PipelineType: V2
+      RoleArn: !GetAtt CodePipelineRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !If [CreateCodePipelineArtifactS3Bucket, !Ref S3BucketCodePipelineArtifacts, !Ref ExistingCodePipelineArtifactS3Bucket]
+      Variables:
+        - Name: TERRAFORM_ACTION
+          DefaultValue: apply
+          Description: "Determines whether to create/update/destroy resources: 'apply' or 'destroy'"
+        - Name: TERRAFORM_ENVIRONMENT
+          DefaultValue: dev
+          Description: Which environment to create/update/destroy resources in? (This relates to a Terrafrom backend.hcl and variable.tfvars file)
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: checkout_repo
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Version: '1'
+                Provider: CodeCommit
+              OutputArtifacts:
+                - Name: SourceArtifact
+              Configuration:
+                RepositoryName: !Ref CodeCommitRepoName
+                BranchName: main
+                PollForSourceChanges: false
+        - Name: Plan
+          Actions:
+            - Name: terraform_plan
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: '1'
+                Provider: CodeBuild
+              InputArtifacts:
+                - Name: SourceArtifact
+              Configuration:
+                ProjectName: !Ref CodeBuildProject
+                EnvironmentVariables: !Sub |
+                  [
+                    {"name":"STAGE", "value":"plan", "type":"PLAINTEXT"},
+                    {"name":"TF_ENVIRONMENT", "value":"#{variables.TERRAFORM_ENVIRONMENT}", "type":"PLAINTEXT"},
+                    {"name":"TF_ACTION", "value":"#{variables.TERRAFORM_ACTION}", "type":"PLAINTEXT"}
+                  ]
+        - Name: Review_Approve
+          Actions:
+            - Name: review_approve_terraform_plan
+              ActionTypeId:
+                Category: Approval
+                Owner: AWS
+                Version: '1'
+                Provider: Manual
+              Configuration:
+                CustomData: Please review the terraform plan outputted in the 'plan' stage.
+        - Name: Action
+          Actions:
+            - Name: terraform_apply
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: '1'
+                Provider: CodeBuild
+              InputArtifacts:
+                - Name: SourceArtifact
+              Configuration:
+                ProjectName: !Ref CodeBuildProject
+                EnvironmentVariables: !Sub |
+                  [
+                    {"name":"STAGE", "value":"action", "type":"PLAINTEXT"},
+                    {"name":"TF_ENVIRONMENT", "value":"#{variables.TERRAFORM_ENVIRONMENT}", "type":"PLAINTEXT"},
+                    {"name":"TF_ACTION", "value":"#{variables.TERRAFORM_ACTION}", "type":"PLAINTEXT"}
+                  ]
+
+Outputs:
+  DynamoDBTableName:
+    Description: "Name of the DynamoDB table for Terraform state locking. This value should be used in the Terraform project: backend.tf -> 'dynamodb_table' variable." 
+    Value: !Ref DynamoDBTableTerraformLock
+
+  SpokeProjectName: 
+    Description: "Name of the Terraform project. This value should be used when running the stack: spoke-terraform-setup -> 'ProjectName' parameter."
+    Value: !Ref ProjectName
+
+  SpokeCodeBuildRoleArn:
+    Description: "ARN of the CodeBuld Role that has access to build Terraform resources. This value should be used when running the stack: spoke-terraform-setup -> 'CodeBuildRoleArn' parameter."
+    Value: !GetAtt CodeBuildRole.Arn
+
+  TerraformStateS3Bucket:
+    Description: "Name of the S3 bucket for Terraform state files. This value should be used in the Terraform project: backend.tf -> 'bucket' variable."
+    Value: !If [CreateTerraformStateS3Bucket, !Ref S3BucketTerraformState, !Ref ExistingTerraformStateS3Bucket]
+
+  TerraformHubRoleArn:
+    Description: "ARN of the Terraform Hub Role that has access to the Terraform state and lock objects. This value should be used in the Terraform project: backend.tf -> 'assume_role.role_arn' variable." 
+    Value: !GetAtt TerraformHubRole.Arn
+
+  # CodePipelineS3Bucket:
+  #   Description: "Name of the S3 bucket for Codepipeline artifacts."
+  #   Value: !Ref S3BucketCodePipelineArtifacts
+
+  # TerraformHubRoleName:
+  #   Description: "Name of the Terraform Hub Role that has access to the Terraform state and lock objects. This value should be used in the Terraform project: backend.tf -> 'assume_role.role_arn' variable." 
+  #   Value: !Ref TerraformHubRole
+
+  # CodeBuildProjectName:
+  #   Description: "Name of the CodeBuild project."
+  #   Value: !Ref CodeBuildProject
+
+  # CodePipelineName:
+  #   Description: "Name of the CodePipeline."
+  #   Value: !Ref CodePipeline
+
+  # CodeBuildRoleName:
+  #   Description: "Name of the CodeBuld Role that has access to build Terraform resources."
+  #   Value: !Ref CodeBuildRole

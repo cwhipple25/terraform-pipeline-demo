@@ -1,0 +1,104 @@
+version: 0.2
+
+env:
+  shell: bash
+  variables:
+    STAGE: ""
+    TF_ENVIRONMENT: ""
+    TF_ACTION: ""
+    TF_PROJECT_ROOT_DIR: "projects/ec2_demo"
+
+phases:
+  install:
+    commands:
+      - | 
+        echo "Installing dependencies (utilities and repositories)..."  
+        sudo yum install -y yum-utils
+        sudo yum-config-manager --add-repo https://rpm.releases.hashicorp.com/AmazonLinux/hashicorp.repo
+        echo "Installing Terraform..." 
+        sudo yum -y install terraform
+        echo "Terraform installed with version:" 
+        terraform --version
+      
+  pre_build:
+    commands:
+      - |
+        if [[ ! $STAGE =~ ^(plan|action)$ ]]; then
+          echo "env:STAGE value did not match either [plan] or [action]. Exiting..."
+          exit 1
+        fi
+
+        if [ -z "$TF_ENVIRONMENT" ]; then
+          echo "TF_ENVIRONMENT is not set. Exiting..."
+          exit 1
+        fi
+
+        if [ -z "$TF_ACTION" ]; then
+          echo "TF_ACTION is not set. Exiting..."
+          exit 1
+        fi
+
+        if [ -z "$TF_PROJECT_ROOT_DIR" ]; then
+          echo "TF_PROJECT_ROOT_DIR is not set. Exiting..."
+          exit 1
+        fi
+
+      - |
+        echo "Setting working directory to: ${TF_PROJECT_ROOT_DIR}"
+        cd $TF_PROJECT_ROOT_DIR
+
+      - |
+        TFBACKEND="-backend-config=backends/${TF_ENVIRONMENT}.hcl"
+        echo "Terraform TFBACKEND variable to: ${TFBACKEND}"
+
+      - |
+        TFVARS="-var-file=environments/${TF_ENVIRONMENT}.tfvars"
+        echo "Terraform TFVARS Path variable to: ${TFVARS}"
+
+      - |
+        echo Initializing Terraform...
+        terraform init $TFBACKEND
+
+      - |
+        if [ $STAGE = "plan" ]; then
+          echo Validating Terraform...
+          terraform validate
+        else
+          echo env:STAGE set to [action]. Skipping this step.
+        fi
+
+  build:
+    commands:
+      - | 
+        BUILD_ID=$(echo $CODEBUILD_BUILD_ID | tr ":" "_")
+        if [ $STAGE = "plan" ]; then
+          mkdir plans
+          TFPLAN_FILE="plans/tfplan_$BUILD_ID"
+          if [ $TF_ACTION = "destroy" ]; then
+            echo Executing [terraform plan -destroy] with tfvars: $TFVARS
+            terraform plan -destroy $TFVARS -out $TFPLAN_FILE
+          else
+            echo Executing [terraform plan] with tfvars: $TFVARS
+            terraform plan $TFVARS -out $TFPLAN_FILE
+          fi
+        else
+          echo env:STAGE set to [action]. Skipping this step.
+        fi
+
+      - |
+        if [ $STAGE = "action" ]; then
+          if [ $TF_ACTION = "destroy" ]; then
+            echo Executing [terraform apply -destroy] with tfvars: $TFVARS
+            terraform apply -auto-approve -destroy $TFVARS
+          else
+            echo Executing [terraform apply] with tfvars: $TFVARS
+            terraform apply -auto-approve $TFVARS
+          fi
+        else
+          echo env:STAGE set to [plan]. Skipping this step.
+        fi
+# artifacts:
+#   files:
+#     - 'plans/*'
+#   base-directory: $TF_PROJECT_ROOT_DIR
+#   discard-paths: yes

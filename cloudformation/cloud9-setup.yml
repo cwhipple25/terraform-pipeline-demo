@@ -1,0 +1,129 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: A template to create an AWS Cloud9 EC2 environment with specified AMI alias and Repositories.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Description: The name of the Cloud9 environment.
+    Default: my-cloud9-environment
+  Description:
+    Type: String
+    Description: The description of the Cloud9 environment.
+    Default: Cloud9 environment
+  LocalRepositoryPath:
+    Type: String
+    Description: The path within the Cloud9 environment where the repository will be cloned.
+    Default: "/repos/<repo-name>"
+  AutomaticStopTimeMinutes:
+    Type: Number
+    Description: The number of minutes until the running instance is automatically stopped.
+    Default: 30
+  ConnectionType:
+    Type: String
+    Description: The type of connection to the environment (Connect automatically or Connect with SSH).
+    AllowedValues:
+      - CONNECT_SSH
+      - CONNECT_SSM
+    Default: CONNECT_SSM
+  AMIAlias:
+    Type: String
+    Description: The alias of the image used for the environment. Leave blank to use the default AWS image.
+    Default: amazonlinux-2023-x86_64
+  InstanceType:
+    Type: String
+    Description: The instance type (e.g., t2.micro, t3.small) of the environment.
+    Default: t3.micro
+    AllowedValues:
+      - t2.micro
+      - t3.micro
+      - t3.small
+  SubnetId:
+    Type: String
+    Description: The ID of the subnet in which the environment will be created.
+  RepositoryUrl:
+    Type: String
+    Description: The URL of the repository to be cloned into the environment.
+    Default: https://git-codecommit.us-west-2.amazonaws.com/v1/repos/terraform-sandbox-repo
+  CreateInstanceProfile:
+    Type: String
+    Description: If the AWS-managed AWSCloud9SSMInstanceProfile instance profile should be created.
+    Default: "Yes"
+    AllowedValues:
+      - "Yes"
+      - "No"
+  VpcId:
+    Type: String
+    Description: The ID of the VPC where the Cloud9 environment and CodeCommit VPC Endpoint will be created.
+      
+Conditions:
+  ShouldCreateInstanceProfile: !Equals [ !Ref CreateInstanceProfile, "Yes" ]
+
+Resources:
+  CodeCommitVpcEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VpcId
+      ServiceName: !Join
+        - ''
+        - - 'com.amazonaws.'
+          - !Ref 'AWS::Region'
+          - '.git-codecommit'
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref SubnetId
+      PrivateDnsEnabled: true
+  AWSCloud9SSMAccessRole:
+    Type: AWS::IAM::Role
+    Properties: 
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+              - cloud9.amazonaws.com
+              - ec2.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Description: 'Service linked role for AWS Cloud9'
+      Path: '/service-role/'
+      ManagedPolicyArns: 
+        - arn:aws:iam::aws:policy/AWSCloud9SSMInstanceProfile
+      RoleName: 'AWSCloud9SSMAccessRole'
+      Policies:
+        - PolicyName: AllowCrossAccountAssumeRole
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Sid: "AllowAssumeRole"
+                Effect: "Allow"
+                Action: "sts:AssumeRole"
+                Resource: "*"
+  AWSCloud9SSMInstanceProfile:
+    Type: "AWS::IAM::InstanceProfile"
+    Condition: ShouldCreateInstanceProfile
+    Properties: 
+      InstanceProfileName: AWSCloud9SSMInstanceProfile
+      Path: "/"
+      Roles: 
+        - 
+          Ref: AWSCloud9SSMAccessRole
+  Cloud9EnvironmentEC2:
+    Type: 'AWS::Cloud9::EnvironmentEC2'
+    Properties:
+      AutomaticStopTimeMinutes: !Ref AutomaticStopTimeMinutes
+      ConnectionType: !Ref ConnectionType
+      Description: !Ref Description
+      InstanceType: !Ref InstanceType
+      Name: !Ref EnvironmentName
+      SubnetId: !Ref SubnetId
+      ImageId: !Ref AMIAlias
+      Repositories:
+        - RepositoryUrl: !Ref RepositoryUrl
+          PathComponent: !Ref LocalRepositoryPath
+    DependsOn: AWSCloud9SSMAccessRole
+
+Outputs:
+  Cloud9EnvironmentId:
+    Description: The ID of the Cloud9 environment
+    Value: !Ref Cloud9EnvironmentEC2
