@@ -11,7 +11,7 @@ This document outlines the step-by-step process for deploying AWS resources usin
 ## Steps
 
 ### (Optional) Deploy No-Ingress Cloud9 Environment
-If you would rather opt for a remote environment from which to perform Git and script editing mentioned in steps below, please follow these instructions, otherwise, skip and move on to Step 1. The Cloud9 environment includes the Cloud9 IDE, Git, AWS CLI, and the ability to install any other software you may want/need. 
+If you would rather opt for a remote environment from which to perform Git and script editing mentioned in steps below, please follow these instructions, otherwise, skip and move on to Step 0. The Cloud9 environment includes the Cloud9 IDE, Git, AWS CLI, and the ability to install any other software you may want/need. 
 - Navigate to the repository directory and locate the Cloud9 CloudFormation template: `<repo>/cloudformation/cloud9-setup.yml`.
 - Deploy the this stack in a centralized (Hub) AWS account.
 - Once the Cloud9 environment has been created, navigate to the Cloud9 console to access it. 
