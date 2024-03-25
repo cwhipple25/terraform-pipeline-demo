@@ -4,8 +4,9 @@
 This document outlines the step-by-step process for deploying AWS resources using Terraform, AWS CodeBuild, and AWS CodePipeline across multiple accounts using a Hub and Spoke model. The process involves setting up CI/CD pipelines for automation, 
 managing Terraform state files securely, and ensuring cross-account deployments through IAM roles.
 
-## Diagram
-![screenshot](Diagram.png)
+## Diagrams
+![screenshot](deployment.png)
+![screenshot](architecture.png)
 
 ## Pre-requisites
 - Access to Hub/Spoke accounts via the AWS Management Console.
