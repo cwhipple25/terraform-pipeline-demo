@@ -21,8 +21,8 @@ If you would rather opt for a remote environment from which to perform Git and s
 - Deploy the this stack in a centralized (Hub) AWS account.
 - Once the Cloud9 environment has been created, navigate to the Cloud9 console to access it. 
 
-### 0. Clone This Repository
-- Clone this repo to your own repo.
+### 0. Clone/Download This Repository
+- Clone or download this repo to your own repo.
 - The following steps assume that your are working off your own clone of this repository.
 
 ### 1. Repository Checkout
